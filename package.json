@@ -1,0 +1,30 @@
+{
+  "name": "olft",
+  "version": "1.0.0",
+  "description": "Parse PowerPoint (.pptx) files and extract slide content, images, and diagram data",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "pptx",
+    "powerpoint",
+    "parser",
+    "slides",
+    "office"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.3.1",
+    "jszip": "^3.10.1"
+  }
+}
