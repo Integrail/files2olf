@@ -87,3 +87,46 @@ export const GRAPHIC_URIS = {
   TABLE: 'table',
   DIAGRAM: 'diagram'
 } as const;
+
+/**
+ * Resource limits for Office document parsing
+ */
+export const RESOURCE_LIMITS = {
+  /** Maximum file size: 100MB */
+  MAX_FILE_SIZE: 100 * 1024 * 1024,
+  /** Maximum image size: 50MB */
+  MAX_IMAGE_SIZE: 50 * 1024 * 1024,
+  /** Maximum slides in PPTX */
+  MAX_SLIDES: 1000,
+  /** Maximum sheets in XLSX */
+  MAX_SHEETS: 100,
+  /** Maximum pages in DOCX */
+  MAX_PAGES: 1000,
+  /** Maximum recursion depth for nested structures */
+  MAX_RECURSION_DEPTH: 50
+} as const;
+
+/**
+ * Image content type mappings
+ */
+export const IMAGE_CONTENT_TYPES: Record<string, string> = {
+  'png': 'image/png',
+  'jpg': 'image/jpeg',
+  'jpeg': 'image/jpeg',
+  'gif': 'image/gif',
+  'bmp': 'image/bmp',
+  'svg': 'image/svg+xml',
+  'tiff': 'image/tiff',
+  'tif': 'image/tiff',
+  'webp': 'image/webp',
+  'emf': 'image/x-emf',
+  'wmf': 'image/x-wmf'
+};
+
+/**
+ * Get MIME content type from file extension
+ */
+export function getImageContentType(extension: string): string {
+  const ext = extension.toLowerCase();
+  return IMAGE_CONTENT_TYPES[ext] || `image/${ext}`;
+}

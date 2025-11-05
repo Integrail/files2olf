@@ -6,6 +6,8 @@ import { extractTables } from './docxTableExtractor';
 import { extractFormulas } from './docxFormulaExtractor';
 import { extractImages } from './docxImageExtractor';
 import { convertPageToMarkdown } from './docxMarkdownConverter';
+import { cleanupZip } from './utils/zipCleanup';
+import { parseRelationshipsFromFile } from './utils/relationships';
 
 // Maximum file size: 100MB
 const MAX_DOCX_FILE_SIZE = 100 * 1024 * 1024;
@@ -49,7 +51,7 @@ export async function parseDocx(docxBuffer: Buffer, options?: DocxParseOptions):
 
     // Parse relationships
     const relsFile = zip.file('word/_rels/document.xml.rels');
-    relationships = relsFile ? await parseRelationships(relsFile) : new Map();
+    relationships = relsFile ? await parseRelationshipsFromFile(relsFile) : new Map();
 
     // Parse document and split into pages
     const pages = await parsePages(documentXml, zip, relationships, options);
@@ -67,18 +69,8 @@ export async function parseDocx(docxBuffer: Buffer, options?: DocxParseOptions):
     throw new Error(`Failed to parse DOCX file: ${errorMessage}`);
   } finally {
     // CRITICAL: Clean up JSZip to prevent memory leaks
-    if (zip) {
-      // Clear all file references and internal data
-      Object.keys(zip.files).forEach(key => {
-        const file = zip!.files[key];
-        // Clear internal data buffers
-        if ((file as any)._data) {
-          (file as any)._data = null;
-        }
-        delete zip!.files[key];
-      });
-      zip = undefined;
-    }
+    cleanupZip(zip);
+    zip = undefined;
 
     // Clear relationships map
     if (relationships) {
@@ -88,24 +80,6 @@ export async function parseDocx(docxBuffer: Buffer, options?: DocxParseOptions):
   }
 }
 
-/**
- * Parse relationship file to get image and other references
- */
-async function parseRelationships(relsFile: JSZip.JSZipObject): Promise<Map<string, string>> {
-  const relationships = new Map<string, string>();
-
-  const relsXml = await relsFile.async('text');
-
-  // Extract relationship mappings: rId -> Target path
-  const relMatches = relsXml.matchAll(/<Relationship[^>]+Id="([^"]+)"[^>]+Target="([^"]+)"/g);
-  for (const match of relMatches) {
-    if (match[1] && match[2]) {
-      relationships.set(match[1], match[2]);
-    }
-  }
-
-  return relationships;
-}
 
 /**
  * Parse document XML and split into pages

@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { cleanupZip } from './zipCleanup';
 
 /**
  * Supported Office file formats
@@ -44,12 +45,8 @@ export async function detectOfficeFormat(buffer: Buffer): Promise<OfficeFormat> 
       return 'unknown';
     } finally {
       // Clean up JSZip instance to prevent memory leak
-      if (zip) {
-        Object.keys(zip.files).forEach(key => {
-          delete zip!.files[key];
-        });
-        zip = undefined;
-      }
+      cleanupZip(zip);
+      zip = undefined;
     }
   }
 

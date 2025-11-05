@@ -1,6 +1,7 @@
 import { Table, TableRow, TableCell, Paragraph } from './docxTypes';
 import { ensureArray } from './utils/array';
 import { extractTextValue } from './utils/xml';
+import { convertTableToMarkdown as convertToMarkdownTable } from './utils/markdown';
 
 /**
  * Extract tables from document elements
@@ -41,7 +42,8 @@ function extractTable(tbl: any): Table | null {
   }
 
   // Convert to markdown
-  const markdown = convertTableToMarkdown(rows);
+  const stringRows = rows.map(row => row.cells.map(cell => cell.text || ''));
+  const markdown = convertToMarkdownTable(stringRows);
 
   return {
     rows,
@@ -135,29 +137,3 @@ function extractParagraphText(para: any): string {
   return text;
 }
 
-/**
- * Convert table to markdown format
- */
-function convertTableToMarkdown(rows: TableRow[]): string {
-  if (rows.length === 0) return '';
-
-  const lines: string[] = [];
-
-  // Convert rows to string arrays
-  const stringRows = rows.map(row => row.cells.map(cell => cell.text || ''));
-
-  // Header row
-  if (stringRows.length > 0) {
-    const header = stringRows[0].join(' | ');
-    lines.push('| ' + header + ' |');
-    lines.push('| ' + stringRows[0].map(() => '---').join(' | ') + ' |');
-  }
-
-  // Data rows
-  for (let i = 1; i < stringRows.length; i++) {
-    const row = stringRows[i].join(' | ');
-    lines.push('| ' + row + ' |');
-  }
-
-  return lines.join('\n');
-}

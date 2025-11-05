@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import { Table, CellData, CellType, MergedCellRange, XlsxParseOptions } from './xlsxTypes';
 import { convertTableToJson } from './xlsxJsonConverter';
 import { coordsToAddress } from './utils/excelCoordinates';
+import { convertTableToMarkdown as convertToMarkdownTable } from './utils/markdown';
 
 /**
  * Extract tables from a worksheet
@@ -100,7 +101,8 @@ function extractTable(
   );
 
   // Generate markdown
-  const markdown = convertTableToMarkdown(data);
+  const rows = data.map(row => row.map(cell => String(cell.value ?? '')));
+  const markdown = convertToMarkdownTable(rows);
 
   const table: Table = {
     name: region.name,
@@ -277,33 +279,6 @@ function excelDateToJSDate(excelDate: number): Date {
 }
 
 
-/**
- * Convert table data to markdown format
- */
-function convertTableToMarkdown(data: CellData[][]): string {
-  if (data.length === 0) return '';
-
-  const rows = data.map(row =>
-    row.map(cell => String(cell.value ?? ''))
-  );
-
-  const lines: string[] = [];
-
-  // Header row
-  if (rows.length > 0) {
-    const header = rows[0].join(' | ');
-    lines.push('| ' + header + ' |');
-    lines.push('| ' + rows[0].map(() => '---').join(' | ') + ' |');
-  }
-
-  // Data rows
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i].join(' | ');
-    lines.push('| ' + row + ' |');
-  }
-
-  return lines.join('\n');
-}
 
 /**
  * Table region detected in worksheet

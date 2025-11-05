@@ -1,6 +1,7 @@
 import { xmlParser, extractTextValue } from './utils/xml';
 import { ensureArray } from './utils/array';
 import { XML_PATHS, PLACEHOLDER_TYPES, GRAPHIC_URIS } from './utils/constants';
+import { convertTableToMarkdown as convertToMarkdownTable } from './utils/markdown';
 import type {
   PptxShape,
   Paragraph,
@@ -255,32 +256,7 @@ function extractTableText(graphicData: any): string | null {
   if (rows.length === 0) return null;
 
   // Convert to markdown table
-  return convertTableToMarkdown(rows);
-}
-
-/**
- * Convert table rows to markdown format
- */
-function convertTableToMarkdown(rows: string[][]): string {
-  if (rows.length === 0) return '';
-
-  const colCount = Math.max(...rows.map(r => r.length));
-  const lines: string[] = [];
-
-  // Add header row
-  if (rows.length > 0) {
-    const header = rows[0].map(cell => cell || ' ').join(' | ');
-    lines.push('| ' + header + ' |');
-    lines.push('|' + ' --- |'.repeat(colCount));
-  }
-
-  // Add data rows
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i].map(cell => cell || ' ').join(' | ');
-    lines.push('| ' + row + ' |');
-  }
-
-  return lines.join('\n');
+  return convertToMarkdownTable(rows);
 }
 
 /**

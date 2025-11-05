@@ -2,6 +2,8 @@ import JSZip from 'jszip';
 import { Slide, SlideImage, DiagramData, PptxParseResult, PptxParseOptions } from './types';
 import { resolveRelativePath, getRelationshipPath } from './utils/path';
 import { REGEX_PATTERNS } from './utils/constants';
+import { cleanupZip } from './utils/zipCleanup';
+import { parseRelationshipsFromPath } from './utils/relationships';
 
 /**
  * Parse a PPTX file and extract slides with their content, images, and diagram data
@@ -67,13 +69,8 @@ export async function parsePptx(pptxBuffer: Buffer, options?: PptxParseOptions):
     throw new Error(`Failed to parse PPTX file: ${errorMessage}`);
   } finally {
     // CRITICAL: Clean up JSZip to prevent memory leaks
-    if (zip) {
-      // Remove all file references to allow garbage collection
-      Object.keys(zip.files).forEach(key => {
-        delete zip!.files[key];
-      });
-      zip = undefined;
-    }
+    cleanupZip(zip);
+    zip = undefined;
   }
 }
 
@@ -105,7 +102,7 @@ async function processSlidesSequential(
 
     // Get slide relationships
     const relsPath = getRelationshipPath(slidePath);
-    const relationships = await parseRelationships(zip, relsPath);
+    const relationships = await parseRelationshipsFromPath(zip, relsPath);
 
     // Extract images
     const images = await extractImages(zip, relationships, slidePath, contentTypes);
@@ -149,7 +146,7 @@ async function processSlidesParallel(
 
     // Get slide relationships
     const relsPath = getRelationshipPath(slidePath);
-    const relationships = await parseRelationships(zip, relsPath);
+    const relationships = await parseRelationshipsFromPath(zip, relsPath);
 
     // Extract images and diagrams in parallel
     const [images, diagrams] = await Promise.all([
@@ -189,25 +186,6 @@ async function loadContentTypes(zip: JSZip): Promise<Map<string, string>> {
   return contentTypesMap;
 }
 
-/**
- * Parse relationship file to get references to images, diagrams, etc.
- */
-async function parseRelationships(zip: JSZip, relsPath: string): Promise<Map<string, string>> {
-  const relationships = new Map<string, string>();
-
-  const relsFile = zip.file(relsPath);
-  if (!relsFile) return relationships;
-
-  const relsXml = await relsFile.async('text');
-
-  // Extract relationship mappings: rId -> Target path
-  const relMatches = relsXml.matchAll(/\<Relationship[^>]+Id="([^"]+)"[^>]+Target="([^"]+)"/g);
-  for (const match of relMatches) {
-    relationships.set(match[1], match[2]);
-  }
-
-  return relationships;
-}
 
 /**
  * Extract images referenced in a slide
