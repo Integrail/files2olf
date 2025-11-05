@@ -232,7 +232,7 @@ function extractTableText(graphicData: any): string | null {
     const tcs = ensureArray(tr[XML_PATHS.TABLE_CELL]);
 
     for (const tc of tcs) {
-      const txBody = tc[XML_PATHS.TEXT_BODY];
+      const txBody = tc[XML_PATHS.TEXT_BODY_DRAWING];
       if (txBody) {
         const paragraphs = ensureArray(txBody[XML_PATHS.PARAGRAPH]);
 

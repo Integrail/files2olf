@@ -16,6 +16,7 @@ export const XML_PATHS = {
   NON_VISUAL_PROPS: 'p:nvPr',
   PLACEHOLDER: 'p:ph',
   TEXT_BODY: 'p:txBody',
+  TEXT_BODY_DRAWING: 'a:txBody', // Text body in tables/drawing elements
 
   // Text elements
   PARAGRAPH: 'a:p',
