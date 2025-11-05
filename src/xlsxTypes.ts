@@ -7,11 +7,6 @@
  */
 export interface XlsxParseOptions {
   /**
-   * Process sheets in parallel for better performance (default: false)
-   */
-  parallel?: boolean;
-
-  /**
    * Convert tables to nested JSON structures based on merged headers (default: false)
    */
   convertToJson?: boolean;

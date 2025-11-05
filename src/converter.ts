@@ -348,8 +348,16 @@ export function extractDiagramText(diagramXml: string): string {
 
     // Navigate through diagram structure to find text
     // Diagrams typically have text in various locations depending on type
-    const extractText = (obj: any): void => {
+    const MAX_RECURSION_DEPTH = 50;
+
+    const extractText = (obj: any, depth: number = 0): void => {
       if (!obj || typeof obj !== 'object') return;
+
+      // Prevent stack overflow from deeply nested or circular structures
+      if (depth > MAX_RECURSION_DEPTH) {
+        console.warn(`Maximum diagram recursion depth (${MAX_RECURSION_DEPTH}) reached, truncating extraction`);
+        return;
+      }
 
       // Look for text nodes
       if (obj['dgm:t'] || obj['t']) {
@@ -365,15 +373,15 @@ export function extractDiagramText(diagramXml: string): string {
         if (obj.hasOwnProperty(key)) {
           const value = obj[key];
           if (Array.isArray(value)) {
-            value.forEach(item => extractText(item));
+            value.forEach(item => extractText(item, depth + 1));
           } else if (typeof value === 'object') {
-            extractText(value);
+            extractText(value, depth + 1);
           }
         }
       }
     };
 
-    extractText(parsed);
+    extractText(parsed, 0);
 
     return textElements.join('\n');
   } catch (error) {

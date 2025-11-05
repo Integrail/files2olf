@@ -1,7 +1,13 @@
 import ExcelJS from 'exceljs';
-import { Sheet, XlsxParseOptions, XlsxParseResult } from './xlsxTypes';
+import { Sheet, XlsxParseOptions, XlsxParseResult, MergedCellRange } from './xlsxTypes';
 import { extractTables } from './xlsxTableExtractor';
 import { extractImages } from './xlsxImageExtractor';
+import { parseCellRange } from './utils/excelCoordinates';
+
+// Maximum file size: 100MB
+const MAX_XLSX_FILE_SIZE = 100 * 1024 * 1024;
+// Maximum number of sheets
+const MAX_SHEETS = 100;
 
 /**
  * Parse an XLSX file and extract sheets with their content, tables, and images
@@ -19,20 +25,43 @@ export async function parseXlsx(xlsxBuffer: Buffer, options?: XlsxParseOptions):
   if (xlsxBuffer.length === 0) {
     throw new Error('xlsxBuffer is empty');
   }
+  if (xlsxBuffer.length > MAX_XLSX_FILE_SIZE) {
+    throw new Error(
+      `File size ${xlsxBuffer.length} bytes exceeds maximum ${MAX_XLSX_FILE_SIZE} bytes (100MB)`
+    );
+  }
+
+  let workbook: ExcelJS.Workbook | undefined;
 
   try {
-    const workbook = new ExcelJS.Workbook();
+    workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(xlsxBuffer as any);
 
-    // Process sheets either sequentially or in parallel based on options
-    const sheets = options?.parallel
-      ? await processSheetsParallel(workbook, options)
-      : await processSheetsSequential(workbook, options);
+    // Validate sheet count
+    const sheetCount = workbook.worksheets.length;
+    if (sheetCount > MAX_SHEETS) {
+      throw new Error(
+        `Workbook has ${sheetCount} sheets, maximum is ${MAX_SHEETS}`
+      );
+    }
+
+    // Process sheets sequentially
+    const sheets = await processSheetsSequential(workbook, options);
 
     return { sheets };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to parse XLSX file: ${errorMessage}`);
+  } finally {
+    // CRITICAL: Clean up ExcelJS workbook to prevent memory leaks
+    if (workbook) {
+      // Clear worksheet references
+      workbook.eachSheet((worksheet) => {
+        worksheet.destroy();
+      });
+      // Null the workbook reference to allow garbage collection
+      workbook = undefined;
+    }
   }
 }
 
@@ -53,24 +82,6 @@ async function processSheetsSequential(
   return sheets;
 }
 
-/**
- * Process sheets in parallel for better performance
- */
-async function processSheetsParallel(
-  workbook: ExcelJS.Workbook,
-  options?: XlsxParseOptions
-): Promise<Sheet[]> {
-  const sheetPromises: Promise<Sheet>[] = [];
-
-  workbook.eachSheet((worksheet, sheetId) => {
-    const promise = Promise.resolve(
-      processSheet(worksheet, sheetId - 1, workbook, options)
-    );
-    sheetPromises.push(promise);
-  });
-
-  return Promise.all(sheetPromises);
-}
 
 /**
  * Process a single worksheet
@@ -104,15 +115,27 @@ function processSheet(
 /**
  * Extract merged cell ranges from worksheet
  */
-function extractMergedCells(worksheet: ExcelJS.Worksheet): import('./xlsxTypes').MergedCellRange[] {
-  const mergedCells: import('./xlsxTypes').MergedCellRange[] = [];
+function extractMergedCells(worksheet: ExcelJS.Worksheet): MergedCellRange[] {
+  const mergedCells: MergedCellRange[] = [];
 
   // Access merged cell ranges from ExcelJS
-  const merges: string[] = (worksheet.model as any).merges || [];
+  // Note: worksheet.model.merges is an internal property
+  const worksheetModel = worksheet.model as { merges?: string[] };
+  const merges: string[] = worksheetModel.merges || [];
 
   for (const mergeRef of merges) {
     const range = parseCellRange(mergeRef);
     const topLeftCell = worksheet.getCell(range.startRow, range.startCol);
+
+    // Extract cell value safely
+    let cellValue: string | number | boolean | Date | null = null;
+    if (topLeftCell.value !== null && topLeftCell.value !== undefined) {
+      if (typeof topLeftCell.value === 'object' && 'result' in topLeftCell.value) {
+        cellValue = topLeftCell.value.result as any;
+      } else {
+        cellValue = topLeftCell.value as any;
+      }
+    }
 
     mergedCells.push({
       ref: mergeRef,
@@ -120,50 +143,11 @@ function extractMergedCells(worksheet: ExcelJS.Worksheet): import('./xlsxTypes')
       startCol: range.startCol,
       endRow: range.endRow,
       endCol: range.endCol,
-      value: topLeftCell.value as any,
+      value: cellValue,
       colSpan: range.endCol - range.startCol + 1,
       rowSpan: range.endRow - range.startRow + 1
     });
   }
 
   return mergedCells;
-}
-
-/**
- * Parse a cell range reference (e.g., "A1:C3") to coordinates
- */
-function parseCellRange(ref: string): {
-  startRow: number;
-  startCol: number;
-  endRow: number;
-  endCol: number;
-} {
-  const parts = ref.split(':');
-  const start = cellAddressToCoords(parts[0]);
-  const end = parts.length > 1 ? cellAddressToCoords(parts[1]) : start;
-
-  return {
-    startRow: start.row,
-    startCol: start.col,
-    endRow: end.row,
-    endCol: end.col
-  };
-}
-
-/**
- * Convert cell address (e.g., "A1") to coordinates
- */
-function cellAddressToCoords(address: string): { row: number; col: number } {
-  const match = address.match(/^([A-Z]+)(\d+)$/);
-  if (!match) throw new Error(`Invalid cell address: ${address}`);
-
-  const colLetters = match[1];
-  const row = parseInt(match[2]);
-
-  let col = 0;
-  for (let i = 0; i < colLetters.length; i++) {
-    col = col * 26 + (colLetters.charCodeAt(i) - 64);
-  }
-
-  return { row, col };
 }

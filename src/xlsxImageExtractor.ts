@@ -10,20 +10,17 @@ export function extractImages(
 ): SheetImage[] {
   const images: SheetImage[] = [];
 
-  // Access worksheet images via ExcelJS media API
-  const worksheetModel = worksheet.model as any;
-
-  // ExcelJS stores images in worksheet.model.media or worksheet.getImages()
-  // Try to access images from the worksheet
+  // ExcelJS stores images in worksheet.getImages()
   if (worksheet.getImages) {
     const imageRefs = worksheet.getImages();
 
     for (const imageRef of imageRefs) {
       try {
         // Get image data from workbook media
-        const image = workbook.model.media?.find((media: any) => media.index === imageRef.imageId);
+        const workbookModel = workbook.model as any;
+        const image = workbookModel.media?.find((media: any) => media.name === imageRef.imageId);
 
-        if (image) {
+        if (image && image.buffer) {
           // Determine content type from extension
           const extension = image.extension || 'png';
           const contentType = getContentType(extension);
@@ -36,9 +33,14 @@ export function extractImages(
               }
             : undefined;
 
+          // Ensure buffer is a Node.js Buffer
+          const buffer = Buffer.isBuffer(image.buffer)
+            ? image.buffer
+            : Buffer.from(image.buffer as ArrayBuffer);
+
           images.push({
             fileName: `image${imageRef.imageId}.${extension}`,
-            content: Buffer.from(image.buffer),
+            content: buffer,
             contentType,
             position
           });

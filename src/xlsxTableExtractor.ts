@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import { Table, CellData, CellType, MergedCellRange, XlsxParseOptions } from './xlsxTypes';
 import { convertTableToJson } from './xlsxJsonConverter';
+import { coordsToAddress } from './utils/excelCoordinates';
 
 /**
  * Extract tables from a worksheet
@@ -120,68 +121,25 @@ function extractTable(
 }
 
 /**
+ * Type definition for complex cell values
+ */
+interface CellComplexValue {
+  formula?: string;
+  result?: any;
+  text?: string;
+  richText?: Array<{ text: string }>;
+  hyperlink?: string;
+}
+
+/**
  * Extract data from a single cell
  */
 function extractCellData(cell: ExcelJS.Cell): CellData {
   const address = cell.address;
-  const row = typeof cell.row === 'number' ? cell.row : parseInt(String(cell.row));
-  const col = typeof cell.col === 'number' ? cell.col : parseInt(String(cell.col));
+  const row = Number(cell.row);
+  const col = Number(cell.col);
 
-  let value: string | number | boolean | Date | null = null;
-  let type: CellType = CellType.Empty;
-  let formula: string | undefined;
-
-  // Check cell type
-  if (cell.value === null || cell.value === undefined) {
-    type = CellType.Empty;
-    value = null;
-  } else if (typeof cell.value === 'object') {
-    // Handle complex cell types (formulas, rich text, hyperlinks)
-    const cellValue = cell.value as any;
-
-    if (cellValue.formula) {
-      // Formula cell
-      type = CellType.Formula;
-      formula = cellValue.formula;
-      value = cellValue.result ?? null;
-    } else if (cellValue.text) {
-      // Rich text
-      type = CellType.String;
-      value = cellValue.text;
-    } else if (cellValue.richText) {
-      // Rich text array
-      type = CellType.String;
-      value = cellValue.richText.map((rt: any) => rt.text).join('');
-    } else if (cellValue.hyperlink) {
-      // Hyperlink
-      type = CellType.String;
-      value = cellValue.text || cellValue.hyperlink;
-    } else if (cellValue instanceof Date) {
-      // Date
-      type = CellType.Date;
-      value = cellValue;
-    } else {
-      // Unknown object type - convert to string
-      type = CellType.String;
-      value = String(cellValue);
-    }
-  } else if (typeof cell.value === 'string') {
-    type = CellType.String;
-    value = cell.value;
-  } else if (typeof cell.value === 'number') {
-    // Check if it's a date (Excel stores dates as numbers)
-    if (cell.numFmt && (cell.numFmt.includes('d') || cell.numFmt.includes('m') || cell.numFmt.includes('y'))) {
-      type = CellType.Date;
-      // Convert Excel date number to Date object
-      value = excelDateToJSDate(cell.value);
-    } else {
-      type = CellType.Number;
-      value = cell.value;
-    }
-  } else if (typeof cell.value === 'boolean') {
-    type = CellType.Boolean;
-    value = cell.value;
-  }
+  const { value, type, formula } = extractCellValue(cell);
 
   return {
     address,
@@ -191,6 +149,118 @@ function extractCellData(cell: ExcelJS.Cell): CellData {
     type,
     formula
   };
+}
+
+/**
+ * Extract value, type, and formula from a cell
+ */
+function extractCellValue(cell: ExcelJS.Cell): {
+  value: string | number | boolean | Date | null;
+  type: CellType;
+  formula?: string;
+} {
+  // Empty cell
+  if (cell.value === null || cell.value === undefined) {
+    return { value: null, type: CellType.Empty };
+  }
+
+  // Complex cell types (formulas, rich text, hyperlinks)
+  if (typeof cell.value === 'object') {
+    return extractComplexCellValue(cell);
+  }
+
+  // Primitive types
+  if (typeof cell.value === 'string') {
+    return { value: cell.value, type: CellType.String };
+  }
+
+  if (typeof cell.value === 'boolean') {
+    return { value: cell.value, type: CellType.Boolean };
+  }
+
+  if (typeof cell.value === 'number') {
+    return extractNumberCellValue(cell);
+  }
+
+  // Unknown type
+  return { value: String(cell.value), type: CellType.String };
+}
+
+/**
+ * Extract complex cell values (formulas, rich text, dates, hyperlinks)
+ */
+function extractComplexCellValue(cell: ExcelJS.Cell): {
+  value: string | number | boolean | Date | null;
+  type: CellType;
+  formula?: string;
+} {
+  const cellValue = cell.value as CellComplexValue;
+
+  // Formula cell
+  if (cellValue.formula) {
+    return {
+      type: CellType.Formula,
+      formula: cellValue.formula,
+      value: cellValue.result ?? null
+    };
+  }
+
+  // Rich text (simple text property)
+  if (cellValue.text) {
+    return { value: cellValue.text, type: CellType.String };
+  }
+
+  // Rich text (array of styled text)
+  if (cellValue.richText) {
+    const text = cellValue.richText.map((rt) => rt.text).join('');
+    return { value: text, type: CellType.String };
+  }
+
+  // Hyperlink
+  if (cellValue.hyperlink) {
+    return {
+      value: cellValue.text || cellValue.hyperlink,
+      type: CellType.String
+    };
+  }
+
+  // Date object
+  if (cell.value instanceof Date) {
+    return { value: cell.value, type: CellType.Date };
+  }
+
+  // Unknown object type
+  return { value: String(cell.value), type: CellType.String };
+}
+
+/**
+ * Extract number cell value (may be date or number)
+ */
+function extractNumberCellValue(cell: ExcelJS.Cell): {
+  value: number | Date;
+  type: CellType;
+} {
+  const numValue = cell.value as number;
+
+  // Check if it's a date (Excel stores dates as numbers)
+  if (cell.numFmt && isDateFormat(cell.numFmt)) {
+    return {
+      value: excelDateToJSDate(numValue),
+      type: CellType.Date
+    };
+  }
+
+  return {
+    value: numValue,
+    type: CellType.Number
+  };
+}
+
+/**
+ * Check if number format indicates a date
+ */
+function isDateFormat(numFmt: string): boolean {
+  return numFmt.includes('d') || numFmt.includes('m') || numFmt.includes('y');
 }
 
 /**
@@ -206,21 +276,6 @@ function excelDateToJSDate(excelDate: number): Date {
   return new Date(excelEpoch + daysOffset * millisecondsPerDay);
 }
 
-/**
- * Convert coordinates to cell address (e.g., (1, 1) -> "A1")
- */
-function coordsToAddress(row: number, col: number): string {
-  let colLetter = '';
-  let tempCol = col;
-
-  while (tempCol > 0) {
-    const remainder = (tempCol - 1) % 26;
-    colLetter = String.fromCharCode(65 + remainder) + colLetter;
-    tempCol = Math.floor((tempCol - 1) / 26);
-  }
-
-  return `${colLetter}${row}`;
-}
 
 /**
  * Convert table data to markdown format

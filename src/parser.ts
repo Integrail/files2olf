@@ -11,6 +11,13 @@ import { REGEX_PATTERNS } from './utils/constants';
  * @throws TypeError if pptxBuffer is not a Buffer
  * @throws Error if the PPTX file is invalid or cannot be parsed
  */
+// Maximum file size: 100MB
+const MAX_PPTX_FILE_SIZE = 100 * 1024 * 1024;
+// Maximum number of slides
+const MAX_SLIDES = 1000;
+// Maximum image size: 50MB
+const MAX_IMAGE_SIZE = 50 * 1024 * 1024;
+
 export async function parsePptx(pptxBuffer: Buffer, options?: PptxParseOptions): Promise<PptxParseResult> {
   // Input validation
   if (!Buffer.isBuffer(pptxBuffer)) {
@@ -19,21 +26,35 @@ export async function parsePptx(pptxBuffer: Buffer, options?: PptxParseOptions):
   if (pptxBuffer.length === 0) {
     throw new Error('pptxBuffer is empty');
   }
+  if (pptxBuffer.length > MAX_PPTX_FILE_SIZE) {
+    throw new Error(
+      `File size ${pptxBuffer.length} bytes exceeds maximum ${MAX_PPTX_FILE_SIZE} bytes (100MB)`
+    );
+  }
+
+  let zip: JSZip | undefined;
 
   try {
-    const zip = await JSZip.loadAsync(pptxBuffer);
+    zip = await JSZip.loadAsync(pptxBuffer);
 
-  // Find all slide files
-  const slideFiles = Object.keys(zip.files)
-    .filter(path => REGEX_PATTERNS.SLIDE_FILE.test(path))
-    .sort((a, b) => {
-      const numA = parseInt(a.match(REGEX_PATTERNS.SLIDE_NUMBER)?.[1] || '0');
-      const numB = parseInt(b.match(REGEX_PATTERNS.SLIDE_NUMBER)?.[1] || '0');
-      return numA - numB;
-    });
+    // Find all slide files
+    const slideFiles = Object.keys(zip.files)
+      .filter(path => REGEX_PATTERNS.SLIDE_FILE.test(path))
+      .sort((a, b) => {
+        const numA = parseInt(a.match(REGEX_PATTERNS.SLIDE_NUMBER)?.[1] || '0');
+        const numB = parseInt(b.match(REGEX_PATTERNS.SLIDE_NUMBER)?.[1] || '0');
+        return numA - numB;
+      });
 
-  // Load content types to map extensions to MIME types
-  const contentTypes = await loadContentTypes(zip);
+    // Validate slide count
+    if (slideFiles.length > MAX_SLIDES) {
+      throw new Error(
+        `Presentation has ${slideFiles.length} slides, maximum is ${MAX_SLIDES}`
+      );
+    }
+
+    // Load content types to map extensions to MIME types
+    const contentTypes = await loadContentTypes(zip);
 
     // Process slides either sequentially or in parallel based on options
     const slides = options?.parallel
@@ -44,6 +65,15 @@ export async function parsePptx(pptxBuffer: Buffer, options?: PptxParseOptions):
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to parse PPTX file: ${errorMessage}`);
+  } finally {
+    // CRITICAL: Clean up JSZip to prevent memory leaks
+    if (zip) {
+      // Remove all file references to allow garbage collection
+      Object.keys(zip.files).forEach(key => {
+        delete zip!.files[key];
+      });
+      zip = undefined;
+    }
   }
 }
 
@@ -204,6 +234,15 @@ async function extractImages(
       }
 
       const content = await imageFile.async('nodebuffer');
+
+      // Validate image size
+      if (content.length > MAX_IMAGE_SIZE) {
+        console.warn(
+          `Warning: Image ${imagePath} size ${content.length} bytes exceeds maximum ${MAX_IMAGE_SIZE} bytes, skipping`
+        );
+        continue;
+      }
+
       const fileName = imagePath.split('/').pop() || '';
       const extension = fileName.split('.').pop()?.toLowerCase() || '';
       const contentType = contentTypes.get(extension) || `image/${extension}`;

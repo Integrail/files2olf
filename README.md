@@ -4,25 +4,35 @@ A TypeScript library for parsing PowerPoint (.pptx) and Excel (.xlsx) files, ext
 
 ## Features
 
-### PowerPoint (.pptx)
-- Extract slide XML content
-- Extract all referenced images with metadata
-- Extract diagram data files (data*.xml)
-- Convert slides to Markdown
+### PowerPoint
+- **PPTX (2007+)**: ✅ Full support
+  - Extract slide XML content
+  - Extract all referenced images with metadata
+  - Extract diagram data files (data*.xml)
+  - Convert slides to Markdown
+- **PPT (97-2003)**: ❌ Not supported (convert to PPTX first)
 
-### Excel (.xlsx)
-- Extract all sheets with cell data
-- Detect and extract tables
-- Convert tables with nested headers to hierarchical JSON
-- Extract embedded images
-- Support for merged cells and complex table structures
-- Pivot tables treated as regular cells
+### Excel
+- **XLSX (2007+)**: ✅ Full support
+  - Extract all sheets with cell data
+  - Detect and extract tables
+  - Convert tables with nested headers to hierarchical JSON
+  - Extract embedded images
+  - Support for merged cells and complex table structures
+  - Pivot tables treated as regular cells
+
+- **XLS (97-2003)**: ✅ Supported with limitations
+  - Extract all sheets with cell data
+  - Detect and extract tables
+  - Convert tables to JSON
+  - Support for merged cells and formulas
+  - ⚠️ **Image extraction not supported** (SheetJS limitation)
 
 ### General
 - Full TypeScript support with type definitions
-- Optional parallel processing for better performance
 - Enterprise-grade error handling
 - Production-ready with no memory leaks
+- Automatic format detection utility
 
 ## Installation
 
@@ -123,6 +133,57 @@ async function main() {
       fs.writeFileSync(`output/${image.fileName}`, image.content);
     });
   });
+}
+```
+
+### Excel Legacy (.xls)
+
+```typescript
+import * as fs from 'fs';
+import { parseXls } from 'olft';
+
+async function main() {
+  // Read XLS file (Excel 97-2003)
+  const xlsBuffer = fs.readFileSync('legacy-data.xls');
+
+  // Parse the file (same options as XLSX)
+  const result = await parseXls(xlsBuffer, {
+    convertToJson: true
+  });
+
+  // Note: Images are not extracted from XLS files
+  // Data access is identical to XLSX
+  result.sheets.forEach((sheet) => {
+    console.log(`Sheet: ${sheet.name}`);
+    sheet.tables.forEach((table) => {
+      console.log(table.json);
+    });
+  });
+}
+```
+
+### Auto-detect Format
+
+```typescript
+import { detectOfficeFormat, parseXlsx, parseXls } from 'olft';
+
+async function main() {
+  const buffer = fs.readFileSync('unknown-file.xls');
+
+  // Detect format
+  const format = await detectOfficeFormat(buffer);
+  console.log(`Detected format: ${format}`);
+
+  // Parse based on format
+  if (format === 'xlsx') {
+    const result = await parseXlsx(buffer);
+  } else if (format === 'xls') {
+    const result = await parseXls(buffer);
+  } else if (format === 'pptx') {
+    const result = await parsePptx(buffer);
+  } else if (format === 'ppt') {
+    throw new Error('PPT format not supported. Please convert to PPTX first.');
+  }
 }
 ```
 

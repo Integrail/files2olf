@@ -1,4 +1,5 @@
 import { Table, TableJson, CellData, MergedCellRange } from './xlsxTypes';
+import { coordsToAddress } from './utils/excelCoordinates';
 
 /**
  * Convert a table to JSON array with support for nested headers
@@ -64,27 +65,43 @@ function convertNestedTable(table: Table): TableJson[] {
  * Detect how many rows are headers (vs data)
  */
 function detectHeaderDepth(table: Table): number {
-  const data = table.data;
+  if (table.data.length === 0) return 0;
+
   let headerDepth = 1; // Minimum 1 header row
+  const firstRow = table.data[0]?.[0]?.row ?? 1;
 
-  // Check merged cells - if any merged cells span columns in early rows, those are headers
-  const firstRow = table.data[0] && table.data[0][0] ? table.data[0][0].row : 1;
-  const mergedInEarlyRows = table.mergedHeaders.filter(
-    merge => merge.colSpan > 1 && merge.startRow <= firstRow + 2
-  );
+  // Find deepest merged header without creating intermediate arrays
+  let deepestMergedRow = firstRow;
+  for (const merge of table.mergedHeaders) {
+    if (merge.colSpan > 1 && merge.startRow <= firstRow + 2) {
+      deepestMergedRow = Math.max(deepestMergedRow, merge.endRow);
+    }
+  }
 
-  if (mergedInEarlyRows.length > 0) {
-    // Find the deepest row with merged headers
-    const deepestMergedRow = Math.max(
-      ...mergedInEarlyRows.map(merge => merge.endRow)
-    );
-
-    // Header depth is the row after the last merged header (relative to table start)
+  if (deepestMergedRow > firstRow) {
     headerDepth = deepestMergedRow - firstRow + 1;
   }
 
   // Ensure header depth doesn't exceed table size
-  return Math.min(headerDepth, data.length - 1);
+  return Math.min(headerDepth, table.data.length - 1);
+}
+
+/**
+ * Build an index of merged cells by row for O(1) lookups
+ */
+function buildMergeIndex(mergedHeaders: MergedCellRange[]): Map<number, MergedCellRange[]> {
+  const index = new Map<number, MergedCellRange[]>();
+
+  for (const merge of mergedHeaders) {
+    for (let row = merge.startRow; row <= merge.endRow; row++) {
+      if (!index.has(row)) {
+        index.set(row, []);
+      }
+      index.get(row)!.push(merge);
+    }
+  }
+
+  return index;
 }
 
 /**
@@ -95,10 +112,13 @@ function buildHeaderTree(table: Table, headerDepth: number): HeaderNode[] {
   const numCols = data[0].length;
   const headerTree: HeaderNode[] = [];
 
+  // Build merge index once for O(1) lookups
+  const mergeIndex = buildMergeIndex(table.mergedHeaders);
+
   // Build a header node for each final column
   for (let colIdx = 0; colIdx < numCols; colIdx++) {
     const col = data[0][colIdx].col;
-    const node = buildHeaderNodeForColumn(col, table, headerDepth);
+    const node = buildHeaderNodeForColumn(col, table, headerDepth, mergeIndex);
     headerTree.push(node);
   }
 
@@ -111,29 +131,31 @@ function buildHeaderTree(table: Table, headerDepth: number): HeaderNode[] {
 function buildHeaderNodeForColumn(
   col: number,
   table: Table,
-  headerDepth: number
+  headerDepth: number,
+  mergeIndex: Map<number, MergedCellRange[]>
 ): HeaderNode {
   const path: string[] = [];
-  const firstDataRow = table.data[0] && table.data[0][0] ? table.data[0][0].row : 1;
+  const firstDataRow = table.data[0]?.[0]?.row ?? 1;
 
   // For each header level, find the header text for this column
   for (let level = 0; level < headerDepth; level++) {
     const row = firstDataRow + level;
+    const rowData = table.data[level];
 
-    // Find if this cell is part of a merged range
-    const mergedCell = table.mergedHeaders.find(
-      merge =>
-        merge.startRow === row &&
-        col >= merge.startCol &&
-        col <= merge.endCol
+    // O(1) lookup from index instead of O(n) find
+    const rowMerges = mergeIndex.get(row) || [];
+    const mergedCell = rowMerges.find(
+      merge => col >= merge.startCol && col <= merge.endCol
     );
 
     if (mergedCell) {
       // Use the merged cell's value
       path.push(String(mergedCell.value || ''));
     } else {
-      // Use the cell's direct value
-      const cellData = table.data[level].find(c => c.col === col);
+      // Direct array indexing for O(1) access
+      const firstColInRow = rowData[0]?.col ?? 1;
+      const colIndex = col - firstColInRow;
+      const cellData = rowData[colIndex];
       path.push(String(cellData?.value || ''));
     }
   }
@@ -177,37 +199,10 @@ function buildJsonRow(row: CellData[], headerTree: HeaderNode[]): TableJson {
 }
 
 /**
- * Convert coordinates to cell address
- */
-function coordsToAddress(row: number, col: number): string {
-  let colLetter = '';
-  let tempCol = col;
-
-  while (tempCol > 0) {
-    const remainder = (tempCol - 1) % 26;
-    colLetter = String.fromCharCode(65 + remainder) + colLetter;
-    tempCol = Math.floor((tempCol - 1) / 26);
-  }
-
-  return `${colLetter}${row}`;
-}
-
-/**
  * Header node representing column's header hierarchy
  */
 interface HeaderNode {
   column: number;
   path: string[];
   finalHeader: string;
-}
-
-/**
- * Table region definition
- */
-interface TableRegion {
-  name: string;
-  startRow: number;
-  startCol: number;
-  endRow: number;
-  endCol: number;
 }
