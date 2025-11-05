@@ -1,14 +1,28 @@
-# OLFT - PowerPoint Parser
+# OLFT - Office File Parser
 
-A TypeScript library for parsing PowerPoint (.pptx) files and extracting slide content, images, and diagram data.
+A TypeScript library for parsing PowerPoint (.pptx) and Excel (.xlsx) files, extracting content, images, and data with intelligent table-to-JSON conversion.
 
 ## Features
 
+### PowerPoint (.pptx)
 - Extract slide XML content
 - Extract all referenced images with metadata
 - Extract diagram data files (data*.xml)
+- Convert slides to Markdown
+
+### Excel (.xlsx)
+- Extract all sheets with cell data
+- Detect and extract tables
+- Convert tables with nested headers to hierarchical JSON
+- Extract embedded images
+- Support for merged cells and complex table structures
+- Pivot tables treated as regular cells
+
+### General
 - Full TypeScript support with type definitions
-- Zero dependencies except JSZip
+- Optional parallel processing for better performance
+- Enterprise-grade error handling
+- Production-ready with no memory leaks
 
 ## Installation
 
@@ -17,6 +31,8 @@ npm install
 ```
 
 ## Usage
+
+### PowerPoint (.pptx)
 
 ```typescript
 import * as fs from 'fs';
@@ -61,7 +77,58 @@ async function main() {
 }
 ```
 
+### Excel (.xlsx)
+
+```typescript
+import * as fs from 'fs';
+import { parseXlsx } from 'olft';
+
+async function main() {
+  // Read XLSX file
+  const xlsxBuffer = fs.readFileSync('data.xlsx');
+
+  // Parse the file with JSON conversion enabled
+  const result = await parseXlsx(xlsxBuffer, {
+    convertToJson: true,
+    includeImages: true
+  });
+
+  // Access sheets
+  result.sheets.forEach((sheet) => {
+    console.log(`Sheet: ${sheet.name}`);
+
+    // Access tables
+    sheet.tables.forEach((table) => {
+      console.log(`Table: ${table.name}`);
+      console.log(`Range: ${table.range}`);
+
+      // Access markdown representation
+      console.log(table.markdown);
+
+      // Access JSON representation (if convertToJson: true)
+      if (table.json) {
+        console.log(JSON.stringify(table.json, null, 2));
+      }
+
+      // Check for nested headers
+      if (table.hasHierarchicalHeaders) {
+        console.log('This table has nested headers!');
+        console.log('Merged headers:', table.mergedHeaders);
+      }
+    });
+
+    // Access images
+    sheet.images.forEach((image) => {
+      console.log(`Image: ${image.fileName}`);
+      fs.writeFileSync(`output/${image.fileName}`, image.content);
+    });
+  });
+}
+```
+
 ## Markdown Conversion
+
+### PowerPoint
 
 The library includes a markdown converter that extracts text content from slides and formats it as markdown.
 
