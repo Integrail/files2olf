@@ -47,3 +47,11 @@ export interface PptxParseResult {
   /** Array of slides extracted from the presentation */
   slides: Slide[];
 }
+
+/**
+ * Options for parsing a PPTX document
+ */
+export interface PptxParseOptions {
+  /** Process slides in parallel for better performance (default: false) */
+  parallel?: boolean;
+}

@@ -1,4 +1,14 @@
-import { XMLParser } from 'fast-xml-parser';
+import { xmlParser, extractTextValue } from './utils/xml';
+import { ensureArray } from './utils/array';
+import { XML_PATHS, PLACEHOLDER_TYPES, GRAPHIC_URIS } from './utils/constants';
+import type {
+  PptxShape,
+  Paragraph,
+  ParagraphResult,
+  ParagraphProperties,
+  GraphicFrame,
+  GraphicData
+} from './utils/xmlTypes';
 
 interface ParsedText {
   text: string;
@@ -12,31 +22,33 @@ interface ParsedText {
  * Convert a slide XML to markdown format
  * @param slideXml - The XML content of the slide
  * @returns Markdown representation of the slide
+ * @throws Error if slideXml is invalid or cannot be parsed
  */
 export function convertSlideToMarkdown(slideXml: string): string {
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    textNodeName: '#text',
-    ignoreDeclaration: true,
-    parseAttributeValue: false
-  });
+  // Input validation
+  if (typeof slideXml !== 'string') {
+    throw new TypeError('slideXml must be a string');
+  }
+  if (!slideXml.trim()) {
+    return '';
+  }
 
-  const parsed = parser.parse(slideXml);
-  const textElements: ParsedText[] = [];
+  try {
+    const parsed = xmlParser.parse(slideXml);
+    const textElements: ParsedText[] = [];
 
   // Navigate through the slide structure
-  const slide = parsed['p:sld'];
+  const slide = parsed[XML_PATHS.SLIDE];
   if (!slide) return '';
 
-  const cSld = slide['p:cSld'];
+  const cSld = slide[XML_PATHS.COMMON_SLIDE_DATA];
   if (!cSld) return '';
 
-  const spTree = cSld['p:spTree'];
+  const spTree = cSld[XML_PATHS.SHAPE_TREE];
   if (!spTree) return '';
 
   // Process all shapes in the slide
-  const shapes = Array.isArray(spTree['p:sp']) ? spTree['p:sp'] : (spTree['p:sp'] ? [spTree['p:sp']] : []);
+  const shapes = ensureArray(spTree[XML_PATHS.SHAPE]);
 
   for (const shape of shapes) {
     const shapeTexts = extractTextFromShape(shape);
@@ -46,9 +58,7 @@ export function convertSlideToMarkdown(slideXml: string): string {
   }
 
   // Process graphic frames (for tables, diagrams)
-  const graphicFrames = Array.isArray(spTree['p:graphicFrame'])
-    ? spTree['p:graphicFrame']
-    : (spTree['p:graphicFrame'] ? [spTree['p:graphicFrame']] : []);
+  const graphicFrames = ensureArray(spTree[XML_PATHS.GRAPHIC_FRAME]);
 
   for (const frame of graphicFrames) {
     const text = extractTextFromGraphicFrame(frame);
@@ -57,8 +67,12 @@ export function convertSlideToMarkdown(slideXml: string): string {
     }
   }
 
-  // Convert to markdown
-  return convertToMarkdown(textElements);
+    // Convert to markdown
+    return convertToMarkdown(textElements);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to convert slide XML to markdown: ${errorMessage}`);
+  }
 }
 
 /**
@@ -68,30 +82,28 @@ function extractTextFromShape(shape: any): ParsedText[] {
   const results: ParsedText[] = [];
 
   // Check if this is a title, subtitle, or content placeholder
-  const nvSpPr = shape['p:nvSpPr'];
+  const nvSpPr = shape[XML_PATHS.NON_VISUAL_SHAPE_PROPS];
   let isTitle = false;
   let isSubtitle = false;
   let isContentPlaceholder = false;
 
-  if (nvSpPr && nvSpPr['p:nvPr']) {
-    const ph = nvSpPr['p:nvPr']['p:ph'];
+  if (nvSpPr && nvSpPr[XML_PATHS.NON_VISUAL_PROPS]) {
+    const ph = nvSpPr[XML_PATHS.NON_VISUAL_PROPS][XML_PATHS.PLACEHOLDER];
     if (ph) {
-      const phType = ph['@_type'];
-      isTitle = phType === 'title' || phType === 'ctrTitle';
-      isSubtitle = phType === 'subTitle';
+      const phType = ph[XML_PATHS.ATTR_TYPE];
+      isTitle = phType === PLACEHOLDER_TYPES.TITLE || phType === PLACEHOLDER_TYPES.CENTER_TITLE;
+      isSubtitle = phType === PLACEHOLDER_TYPES.SUBTITLE;
       // Content placeholders have no type or are explicitly marked as 'body' or 'obj'
-      isContentPlaceholder = !phType || phType === 'body' || phType === 'obj';
+      isContentPlaceholder = !phType || phType === PLACEHOLDER_TYPES.BODY || phType === PLACEHOLDER_TYPES.OBJECT;
     }
   }
 
   // Extract text from txBody
-  const txBody = shape['p:txBody'];
+  const txBody = shape[XML_PATHS.TEXT_BODY];
   if (!txBody) return results;
 
   // Get all paragraphs
-  const paragraphs = Array.isArray(txBody['a:p'])
-    ? txBody['a:p']
-    : (txBody['a:p'] ? [txBody['a:p']] : []);
+  const paragraphs = ensureArray(txBody[XML_PATHS.PARAGRAPH]);
 
   for (const para of paragraphs) {
     const paraText = extractParagraphText(para, isContentPlaceholder);
@@ -110,71 +122,65 @@ function extractTextFromShape(shape: any): ParsedText[] {
 }
 
 /**
- * Extract text from a paragraph with list detection
+ * Detect list properties from paragraph properties
  */
-function extractParagraphText(para: any, isContentPlaceholder: boolean = false): { text: string; listLevel?: number; isNumbered?: boolean } {
-  let text = '';
+function detectListProperties(pPr: any): { listLevel?: number; isNumbered?: boolean } {
+  if (!pPr) return {};
+
   let listLevel: number | undefined;
   let isNumbered: boolean | undefined;
 
-  // Check for list properties
-  const pPr = para['a:pPr'];
-  if (pPr) {
-    // Check list level
-    if (pPr['@_lvl'] !== undefined) {
-      listLevel = parseInt(pPr['@_lvl']) || 0;
-    }
-
-    // Check if it's a numbered list
-    if (pPr['a:buAutoNum']) {
-      isNumbered = true;
-      listLevel = listLevel ?? 0; // Default to level 0 if not set
-    } else if (pPr['a:buFont'] || pPr['a:buChar'] || pPr['a:buBlip']) {
-      isNumbered = false; // It's a bullet list
-      listLevel = listLevel ?? 0; // Default to level 0 if not set
-    } else if (pPr['a:buNone']) {
-      // Explicitly no bullet - don't treat as list
-      isNumbered = undefined;
-      listLevel = undefined;
-    }
+  // Check list level
+  if (pPr[XML_PATHS.ATTR_LEVEL] !== undefined) {
+    listLevel = parseInt(pPr[XML_PATHS.ATTR_LEVEL]) || 0;
   }
 
-  // Extract text runs
-  const runs = Array.isArray(para['a:r'])
-    ? para['a:r']
-    : (para['a:r'] ? [para['a:r']] : []);
+  // Check if it's a numbered list
+  if (pPr[XML_PATHS.BULLET_AUTO_NUM]) {
+    isNumbered = true;
+    listLevel = listLevel ?? 0;
+  } else if (pPr[XML_PATHS.BULLET_FONT] || pPr[XML_PATHS.BULLET_CHAR] || pPr[XML_PATHS.BULLET_BLIP]) {
+    isNumbered = false; // It's a bullet list
+    listLevel = listLevel ?? 0;
+  } else if (pPr[XML_PATHS.BULLET_NONE]) {
+    // Explicitly no bullet
+    return { listLevel: undefined, isNumbered: undefined };
+  }
+
+  return { listLevel, isNumbered };
+}
+
+/**
+ * Extract text from text runs in a paragraph
+ */
+function extractTextFromRuns(para: any): string {
+  const runs = ensureArray(para[XML_PATHS.TEXT_RUN]);
+  let text = '';
 
   for (const run of runs) {
-    const t = run['a:t'];
-    if (t !== undefined && t !== null) {
-      // Handle string, number, boolean, or object with #text property
-      if (typeof t === 'string') {
-        text += t;
-      } else if (typeof t === 'number' || typeof t === 'boolean') {
-        text += String(t);
-      } else if (typeof t === 'object' && t['#text'] !== undefined) {
-        text += String(t['#text']);
-      }
-    }
-  }
-
-  // For content placeholders without explicit properties, default to bullet list
-  if (isContentPlaceholder && listLevel === undefined && isNumbered === undefined && !pPr?.['a:buNone']) {
-    // Content placeholders default to bullet lists at level 0
-    listLevel = 0;
-    isNumbered = false;
+    text += extractTextValue(run[XML_PATHS.TEXT]);
   }
 
   // Also check for direct text nodes
-  if (para['a:t'] !== undefined && para['a:t'] !== null) {
-    const t = para['a:t'];
-    if (typeof t === 'string') {
-      text += t;
-    } else if (typeof t === 'number' || typeof t === 'boolean') {
-      text += String(t);
-    } else if (typeof t === 'object' && t['#text'] !== undefined) {
-      text += String(t['#text']);
-    }
+  text += extractTextValue(para[XML_PATHS.TEXT]);
+
+  return text;
+}
+
+/**
+ * Extract text from a paragraph with list detection
+ */
+function extractParagraphText(para: any, isContentPlaceholder: boolean = false): { text: string; listLevel?: number; isNumbered?: boolean } {
+  const pPr = para[XML_PATHS.PARAGRAPH_PROPS];
+  let { listLevel, isNumbered } = detectListProperties(pPr);
+
+  // Extract text from runs
+  const text = extractTextFromRuns(para);
+
+  // For content placeholders without explicit properties, default to bullet list
+  if (isContentPlaceholder && listLevel === undefined && isNumbered === undefined && !pPr?.[XML_PATHS.BULLET_NONE]) {
+    listLevel = 0;
+    isNumbered = false;
   }
 
   return { text, listLevel, isNumbered };
@@ -184,23 +190,23 @@ function extractParagraphText(para: any, isContentPlaceholder: boolean = false):
  * Extract text from graphic frames (tables, diagrams)
  */
 function extractTextFromGraphicFrame(frame: any): string | null {
-  const graphic = frame['a:graphic'];
+  const graphic = frame[XML_PATHS.GRAPHIC];
   if (!graphic) return null;
 
-  const graphicData = graphic['a:graphicData'];
+  const graphicData = graphic[XML_PATHS.GRAPHIC_DATA];
   if (!graphicData) return null;
 
-  const uri = graphicData['@_uri'];
+  const uri = graphicData[XML_PATHS.ATTR_URI];
 
   // Handle tables
-  if (uri && uri.includes('table')) {
+  if (uri && uri.includes(GRAPHIC_URIS.TABLE)) {
     return extractTableText(graphicData);
   }
 
   // For diagrams, we'll need the separate data XML file
   // which should be handled separately via the diagram data
   // For now, just note that a diagram exists
-  if (uri && uri.includes('diagram')) {
+  if (uri && uri.includes(GRAPHIC_URIS.DIAGRAM)) {
     return '[Diagram]';
   }
 
@@ -211,30 +217,24 @@ function extractTextFromGraphicFrame(frame: any): string | null {
  * Extract text from table structure
  */
 function extractTableText(graphicData: any): string | null {
-  const tbl = graphicData['a:tbl'];
+  const tbl = graphicData[XML_PATHS.TABLE];
   if (!tbl) return null;
 
   const rows: string[][] = [];
 
   // Get table rows
-  const trs = Array.isArray(tbl['a:tr'])
-    ? tbl['a:tr']
-    : (tbl['a:tr'] ? [tbl['a:tr']] : []);
+  const trs = ensureArray(tbl[XML_PATHS.TABLE_ROW]);
 
   for (const tr of trs) {
     const row: string[] = [];
 
     // Get cells in row
-    const tcs = Array.isArray(tr['a:tc'])
-      ? tr['a:tc']
-      : (tr['a:tc'] ? [tr['a:tc']] : []);
+    const tcs = ensureArray(tr[XML_PATHS.TABLE_CELL]);
 
     for (const tc of tcs) {
-      const txBody = tc['a:txBody'];
+      const txBody = tc[XML_PATHS.TEXT_BODY];
       if (txBody) {
-        const paragraphs = Array.isArray(txBody['a:p'])
-          ? txBody['a:p']
-          : (txBody['a:p'] ? [txBody['a:p']] : []);
+        const paragraphs = ensureArray(txBody[XML_PATHS.PARAGRAPH]);
 
         const cellText = paragraphs
           .map(p => extractParagraphText(p).text)
@@ -331,17 +331,19 @@ function convertToMarkdown(elements: ParsedText[]): string {
  * Extract text from diagram data XML
  * @param diagramXml - The XML content of the diagram data file
  * @returns Text content from the diagram
+ * @throws Error if diagramXml is invalid or cannot be parsed
  */
 export function extractDiagramText(diagramXml: string): string {
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    textNodeName: '#text',
-    ignoreDeclaration: true
-  });
+  // Input validation
+  if (typeof diagramXml !== 'string') {
+    throw new TypeError('diagramXml must be a string');
+  }
+  if (!diagramXml.trim()) {
+    return '';
+  }
 
   try {
-    const parsed = parser.parse(diagramXml);
+    const parsed = xmlParser.parse(diagramXml);
     const textElements: string[] = [];
 
     // Navigate through diagram structure to find text

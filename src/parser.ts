@@ -1,38 +1,80 @@
 import JSZip from 'jszip';
-import { Slide, SlideImage, DiagramData, PptxParseResult } from './types';
+import { Slide, SlideImage, DiagramData, PptxParseResult, PptxParseOptions } from './types';
+import { resolveRelativePath, getRelationshipPath } from './utils/path';
+import { REGEX_PATTERNS } from './utils/constants';
 
 /**
  * Parse a PPTX file and extract slides with their content, images, and diagram data
  * @param pptxBuffer - Buffer containing the PPTX file content
+ * @param options - Optional parsing options
  * @returns Promise resolving to the parsed presentation data
+ * @throws TypeError if pptxBuffer is not a Buffer
+ * @throws Error if the PPTX file is invalid or cannot be parsed
  */
-export async function parsePptx(pptxBuffer: Buffer): Promise<PptxParseResult> {
-  const zip = await JSZip.loadAsync(pptxBuffer);
-  const slides: Slide[] = [];
+export async function parsePptx(pptxBuffer: Buffer, options?: PptxParseOptions): Promise<PptxParseResult> {
+  // Input validation
+  if (!Buffer.isBuffer(pptxBuffer)) {
+    throw new TypeError('pptxBuffer must be a Buffer');
+  }
+  if (pptxBuffer.length === 0) {
+    throw new Error('pptxBuffer is empty');
+  }
+
+  try {
+    const zip = await JSZip.loadAsync(pptxBuffer);
 
   // Find all slide files
   const slideFiles = Object.keys(zip.files)
-    .filter(path => path.match(/^ppt\/slides\/slide\d+\.xml$/))
+    .filter(path => REGEX_PATTERNS.SLIDE_FILE.test(path))
     .sort((a, b) => {
-      const numA = parseInt(a.match(/slide(\d+)\.xml$/)?.[1] || '0');
-      const numB = parseInt(b.match(/slide(\d+)\.xml$/)?.[1] || '0');
+      const numA = parseInt(a.match(REGEX_PATTERNS.SLIDE_NUMBER)?.[1] || '0');
+      const numB = parseInt(b.match(REGEX_PATTERNS.SLIDE_NUMBER)?.[1] || '0');
       return numA - numB;
     });
 
   // Load content types to map extensions to MIME types
   const contentTypes = await loadContentTypes(zip);
 
-  // Process each slide
+    // Process slides either sequentially or in parallel based on options
+    const slides = options?.parallel
+      ? await processSlidesParallel(zip, slideFiles, contentTypes)
+      : await processSlidesSequential(zip, slideFiles, contentTypes);
+
+    return { slides };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse PPTX file: ${errorMessage}`);
+  }
+}
+
+/**
+ * Process slides sequentially (default behavior)
+ */
+async function processSlidesSequential(
+  zip: JSZip,
+  slideFiles: string[],
+  contentTypes: Map<string, string>
+): Promise<Slide[]> {
+  const slides: Slide[] = [];
+
   for (let i = 0; i < slideFiles.length; i++) {
     const slidePath = slideFiles[i];
     const slideNumber = i + 1;
 
     // Get slide XML
-    const slideXml = await zip.file(slidePath)?.async('text');
-    if (!slideXml) continue;
+    const slideFile = zip.file(slidePath);
+    if (!slideFile) {
+      console.warn(`Warning: Slide file not found: ${slidePath}`);
+      continue;
+    }
+    const slideXml = await slideFile.async('text');
+    if (!slideXml) {
+      console.warn(`Warning: Slide XML is empty: ${slidePath}`);
+      continue;
+    }
 
     // Get slide relationships
-    const relsPath = slidePath.replace('ppt/slides/', 'ppt/slides/_rels/').replace('.xml', '.xml.rels');
+    const relsPath = getRelationshipPath(slidePath);
     const relationships = await parseRelationships(zip, relsPath);
 
     // Extract images
@@ -49,7 +91,52 @@ export async function parsePptx(pptxBuffer: Buffer): Promise<PptxParseResult> {
     });
   }
 
-  return { slides };
+  return slides;
+}
+
+/**
+ * Process slides in parallel for better performance
+ */
+async function processSlidesParallel(
+  zip: JSZip,
+  slideFiles: string[],
+  contentTypes: Map<string, string>
+): Promise<Slide[]> {
+  const slidePromises = slideFiles.map(async (slidePath, i) => {
+    const slideNumber = i + 1;
+
+    // Get slide XML
+    const slideFile = zip.file(slidePath);
+    if (!slideFile) {
+      console.warn(`Warning: Slide file not found: ${slidePath}`);
+      return null;
+    }
+    const slideXml = await slideFile.async('text');
+    if (!slideXml) {
+      console.warn(`Warning: Slide XML is empty: ${slidePath}`);
+      return null;
+    }
+
+    // Get slide relationships
+    const relsPath = getRelationshipPath(slidePath);
+    const relationships = await parseRelationships(zip, relsPath);
+
+    // Extract images and diagrams in parallel
+    const [images, diagrams] = await Promise.all([
+      extractImages(zip, relationships, slidePath, contentTypes),
+      extractDiagrams(zip, relationships, slidePath)
+    ]);
+
+    return {
+      slideNumber,
+      xml: slideXml,
+      images,
+      diagrams
+    };
+  });
+
+  const slideResults = await Promise.all(slidePromises);
+  return slideResults.filter((slide): slide is Slide => slide !== null);
 }
 
 /**
@@ -106,12 +193,15 @@ async function extractImages(
 
   for (const [rId, target] of relationships.entries()) {
     // Check if this is an image reference (typically in ../media/ folder)
-    if (target.includes('../media/') || target.match(/\.(png|jpg|jpeg|gif|bmp|svg|tiff?)$/i)) {
+    if (target.includes('../media/') || REGEX_PATTERNS.IMAGE_EXTENSION.test(target)) {
       // Resolve relative path
       const imagePath = resolveRelativePath(slideDir, target);
 
       const imageFile = zip.file(imagePath);
-      if (!imageFile) continue;
+      if (!imageFile) {
+        console.warn(`Warning: Image file not found: ${imagePath} (referenced as ${rId} in ${slidePath})`);
+        continue;
+      }
 
       const content = await imageFile.async('nodebuffer');
       const fileName = imagePath.split('/').pop() || '';
@@ -144,7 +234,7 @@ async function extractDiagrams(
 
   for (const [rId, target] of relationships.entries()) {
     // Check if this is a diagram data file reference
-    if (target.includes('../diagrams/') && target.match(/data\d*\.xml$/i)) {
+    if (target.includes('../diagrams/') && REGEX_PATTERNS.DIAGRAM_DATA.test(target)) {
       // Resolve relative path to get the diagram data file
       const dataPath = resolveRelativePath(slideDir, target);
 
@@ -162,22 +252,4 @@ async function extractDiagrams(
   }
 
   return diagrams;
-}
-
-/**
- * Resolve a relative path from a base directory
- */
-function resolveRelativePath(baseDir: string, relativePath: string): string {
-  const parts = baseDir.split('/');
-  const relParts = relativePath.split('/');
-
-  for (const part of relParts) {
-    if (part === '..') {
-      parts.pop();
-    } else if (part !== '.') {
-      parts.push(part);
-    }
-  }
-
-  return parts.join('/');
 }

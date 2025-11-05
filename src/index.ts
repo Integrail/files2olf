@@ -4,5 +4,6 @@ export {
   Slide,
   SlideImage,
   DiagramData,
-  PptxParseResult
+  PptxParseResult,
+  PptxParseOptions
 } from './types';
