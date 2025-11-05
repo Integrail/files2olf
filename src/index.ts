@@ -28,6 +28,21 @@ export {
   XlsxParseResult
 } from './xlsxTypes';
 
+// DOCX Parser
+export { parseDocx } from './docxParser';
+export {
+  Page,
+  Paragraph,
+  TextRun,
+  Table as DocxTable,
+  TableRow,
+  TableCell,
+  Formula,
+  DocumentImage,
+  DocxParseOptions,
+  DocxParseResult
+} from './docxTypes';
+
 // Format Detection Utilities
 export {
   detectOfficeFormat,

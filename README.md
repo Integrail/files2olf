@@ -1,8 +1,18 @@
 # OLFT - Office File Parser
 
-A TypeScript library for parsing PowerPoint (.pptx) and Excel (.xlsx) files, extracting content, images, and data with intelligent table-to-JSON conversion.
+A TypeScript library for parsing PowerPoint (.pptx), Excel (.xlsx/.xls), and Word (.docx) files, extracting content, images, tables, and formulas with intelligent conversion to Markdown and JSON.
 
 ## Features
+
+### Word
+- **DOCX (2007+)**: ✅ Full support
+  - Extract content page-by-page
+  - Extract paragraphs with formatting (bold, italic, headings)
+  - Extract tables with markdown conversion
+  - Extract mathematical formulas (OMML format)
+  - Extract embedded images
+  - Convert to Markdown
+- **DOC (97-2003)**: ❌ Not supported (convert to DOCX first)
 
 ### PowerPoint
 - **PPTX (2007+)**: ✅ Full support

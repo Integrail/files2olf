@@ -3,7 +3,7 @@ import JSZip from 'jszip';
 /**
  * Supported Office file formats
  */
-export type OfficeFormat = 'xlsx' | 'xls' | 'pptx' | 'ppt' | 'unknown';
+export type OfficeFormat = 'xlsx' | 'xls' | 'pptx' | 'ppt' | 'docx' | 'doc' | 'unknown';
 
 /**
  * Detect Office file format by examining file signature and internal structure
@@ -34,6 +34,11 @@ export async function detectOfficeFormat(buffer: Buffer): Promise<OfficeFormat> 
         return 'xlsx';
       }
 
+      // Check for DOCX structure
+      if (zip.file('word/document.xml')) {
+        return 'docx';
+      }
+
       return 'unknown';
     } catch {
       return 'unknown';
@@ -60,9 +65,9 @@ export async function detectOfficeFormat(buffer: Buffer): Promise<OfficeFormat> 
 }
 
 /**
- * Detect whether OLE file is XLS or PPT by checking internal markers
+ * Detect whether OLE file is XLS, PPT, or DOC by checking internal markers
  */
-function detectOleFormat(buffer: Buffer): 'xls' | 'ppt' | 'unknown' {
+function detectOleFormat(buffer: Buffer): 'xls' | 'ppt' | 'doc' | 'unknown' {
   const content = buffer.toString('binary', 0, Math.min(buffer.length, 8192));
 
   // PowerPoint markers (UTF-16LE encoded strings)
@@ -83,7 +88,15 @@ function detectOleFormat(buffer: Buffer): 'xls' | 'ppt' | 'unknown' {
     return 'xls';
   }
 
-  // If we can't determine, assume XLS (more common legacy format)
+  // Word markers (UTF-16LE encoded strings)
+  if (
+    content.includes('Word.Document') ||
+    content.includes('W\x00o\x00r\x00d\x00D\x00o\x00c\x00u\x00m\x00e\x00n\x00t') ||
+    content.includes('Microsoft Word')
+  ) {
+    return 'doc';
+  }
+
   return 'unknown';
 }
 
