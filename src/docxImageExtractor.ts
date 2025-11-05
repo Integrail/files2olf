@@ -48,52 +48,58 @@ async function extractImagesFromParagraph(
     const imageRIds = extractImageRIdsFromDrawing(drawing);
 
     for (const rId of imageRIds) {
-      // Skip if already processed
-      if (processedRIds.has(rId)) continue;
-      processedRIds.add(rId);
+      // Wrap each image extraction in try-catch for robustness
+      try {
+        // Skip if already processed
+        if (processedRIds.has(rId)) continue;
+        processedRIds.add(rId);
 
-      // Get image path from relationships
-      const imagePath = relationships.get(rId);
-      if (!imagePath) {
-        console.warn(`Warning: Image relationship ${rId} not found`);
-        continue;
+        // Get image path from relationships
+        const imagePath = relationships.get(rId);
+        if (!imagePath) {
+          console.warn(`Warning: Image relationship ${rId} not found`);
+          continue;
+        }
+
+        // Resolve path (relationships use relative paths)
+        const fullPath = `word/${imagePath}`;
+
+        // Extract image from ZIP
+        const imageFile = zip.file(fullPath);
+        if (!imageFile) {
+          console.warn(`Warning: Image file not found: ${fullPath}`);
+          continue;
+        }
+
+        const content = await imageFile.async('nodebuffer');
+
+        // Validate image size
+        if (content.length > MAX_IMAGE_SIZE) {
+          console.warn(
+            `Warning: Image ${fullPath} size ${content.length} bytes exceeds maximum ${MAX_IMAGE_SIZE} bytes, skipping`
+          );
+          continue;
+        }
+
+        const fileName = imagePath.split('/').pop() || `image_${rId}`;
+        const extension = fileName.split('.').pop()?.toLowerCase() || 'png';
+        const contentType = getContentType(extension);
+
+        // Try to get description from drawing
+        const description = extractImageDescription(drawing);
+
+        images.push({
+          rId,
+          path: fullPath,
+          fileName,
+          content,
+          contentType,
+          description
+        });
+      } catch (error) {
+        // Log error but continue processing other images - graceful degradation
+        console.error(`Error extracting image ${rId}:`, error instanceof Error ? error.message : String(error));
       }
-
-      // Resolve path (relationships use relative paths)
-      const fullPath = `word/${imagePath}`;
-
-      // Extract image from ZIP
-      const imageFile = zip.file(fullPath);
-      if (!imageFile) {
-        console.warn(`Warning: Image file not found: ${fullPath}`);
-        continue;
-      }
-
-      const content = await imageFile.async('nodebuffer');
-
-      // Validate image size
-      if (content.length > MAX_IMAGE_SIZE) {
-        console.warn(
-          `Warning: Image ${fullPath} size ${content.length} bytes exceeds maximum ${MAX_IMAGE_SIZE} bytes, skipping`
-        );
-        continue;
-      }
-
-      const fileName = imagePath.split('/').pop() || `image_${rId}`;
-      const extension = fileName.split('.').pop()?.toLowerCase() || 'png';
-      const contentType = getContentType(extension);
-
-      // Try to get description from drawing
-      const description = extractImageDescription(drawing);
-
-      images.push({
-        rId,
-        path: fullPath,
-        fileName,
-        content,
-        contentType,
-        description
-      });
     }
   }
 

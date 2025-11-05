@@ -81,11 +81,20 @@ function serializeOMML(oMath: any): string {
   return JSON.stringify(oMath, null, 2);
 }
 
+// Maximum recursion depth for formula extraction to prevent stack overflow
+const MAX_FORMULA_RECURSION_DEPTH = 50;
+
 /**
  * Extract plain text from OMML recursively
  */
-function extractTextFromOMML(obj: any): string {
+function extractTextFromOMML(obj: any, depth: number = 0): string {
   if (!obj || typeof obj !== 'object') return '';
+
+  // Prevent stack overflow from deeply nested or circular formula structures
+  if (depth > MAX_FORMULA_RECURSION_DEPTH) {
+    console.warn(`Maximum formula recursion depth (${MAX_FORMULA_RECURSION_DEPTH}) reached, truncating extraction`);
+    return '';
+  }
 
   const textParts: string[] = [];
 
@@ -95,17 +104,17 @@ function extractTextFromOMML(obj: any): string {
     if (text) textParts.push(text);
   }
 
-  // Recursively search all properties
+  // Recursively search all properties with depth tracking
   for (const key in obj) {
     if (obj.hasOwnProperty(key) && key !== 'm:t') {
       const value = obj[key];
       if (Array.isArray(value)) {
         value.forEach(item => {
-          const childText = extractTextFromOMML(item);
+          const childText = extractTextFromOMML(item, depth + 1);
           if (childText) textParts.push(childText);
         });
       } else if (typeof value === 'object') {
-        const childText = extractTextFromOMML(value);
+        const childText = extractTextFromOMML(value, depth + 1);
         if (childText) textParts.push(childText);
       }
     }

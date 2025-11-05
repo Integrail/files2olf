@@ -35,6 +35,7 @@ export async function parseDocx(docxBuffer: Buffer, options?: DocxParseOptions):
   }
 
   let zip: JSZip | undefined;
+  let relationships: Map<string, string> | undefined;
 
   try {
     zip = await JSZip.loadAsync(docxBuffer);
@@ -48,7 +49,7 @@ export async function parseDocx(docxBuffer: Buffer, options?: DocxParseOptions):
 
     // Parse relationships
     const relsFile = zip.file('word/_rels/document.xml.rels');
-    const relationships = relsFile ? await parseRelationships(relsFile) : new Map();
+    relationships = relsFile ? await parseRelationships(relsFile) : new Map();
 
     // Parse document and split into pages
     const pages = await parsePages(documentXml, zip, relationships, options);
@@ -67,10 +68,22 @@ export async function parseDocx(docxBuffer: Buffer, options?: DocxParseOptions):
   } finally {
     // CRITICAL: Clean up JSZip to prevent memory leaks
     if (zip) {
+      // Clear all file references and internal data
       Object.keys(zip.files).forEach(key => {
+        const file = zip!.files[key];
+        // Clear internal data buffers
+        if ((file as any)._data) {
+          (file as any)._data = null;
+        }
         delete zip!.files[key];
       });
       zip = undefined;
+    }
+
+    // Clear relationships map
+    if (relationships) {
+      relationships.clear();
+      relationships = undefined;
     }
   }
 }
@@ -223,9 +236,39 @@ function containsPageBreak(paragraph: any): boolean {
  * Split paragraph at page break into before and after
  */
 function splitParagraphAtPageBreak(paragraph: any): { before: any | null; after: any | null } {
-  // For simplicity, treat entire paragraph as belonging to the page before break
-  // More sophisticated implementation would split the runs
-  return { before: paragraph, after: null };
+  const runs = paragraph['w:r'];
+  if (!runs) return { before: paragraph, after: null };
+
+  const runsArray = Array.isArray(runs) ? runs : [runs];
+
+  // Find the index of the run with page break
+  const breakIndex = runsArray.findIndex(run => run['w:lastRenderedPageBreak'] !== undefined);
+
+  if (breakIndex === -1) {
+    return { before: paragraph, after: null };
+  }
+
+  // Split runs into before (including break run) and after
+  const beforeRuns = runsArray.slice(0, breakIndex + 1);
+  const afterRuns = runsArray.slice(breakIndex + 1);
+
+  // Create before paragraph (clone paragraph structure)
+  const beforePara = beforeRuns.length > 0
+    ? {
+        ...paragraph,
+        'w:r': beforeRuns.length === 1 ? beforeRuns[0] : beforeRuns
+      }
+    : null;
+
+  // Create after paragraph (clone paragraph structure, preserve properties)
+  const afterPara = afterRuns.length > 0
+    ? {
+        ...paragraph,
+        'w:r': afterRuns.length === 1 ? afterRuns[0] : afterRuns
+      }
+    : null;
+
+  return { before: beforePara, after: afterPara };
 }
 
 /**
